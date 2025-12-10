@@ -1,0 +1,104 @@
+#模型参数设置
+units real
+dimension 3
+boundary p p p
+atom_style full
+neighbor 4.0 bin
+neigh_modify delay 10
+timestep  0.1
+#使用混合势力场
+pair_style hybrid  tersoff lj/class2/coul/long 9.5 lj/cut 9.5
+bond_style      class2
+angle_style     class2
+dihedral_style  class2
+improper_style  class2
+read_data  Layer5.data
+pair_coeff * * tersoff BN2.tersoff B NULL NULL NULL NULL NULL N NULL NULL
+pair_coeff 2 2     lj/class2/coul/long	0.0540     4.0100  # c1   -> c   
+pair_coeff 3 3     lj/class2/coul/long	0.0540     4.0100  # c2   -> c   
+pair_coeff 4 4     lj/class2/coul/long	0.0540     4.0100  # coh  -> c   
+pair_coeff 5 5     lj/class2/coul/long	0.0200     2.9950  # hc   -> h   
+pair_coeff 6 6     lj/class2/coul/long	0.0130     1.0980  # ho   -> h*      
+pair_coeff 8 8     lj/class2/coul/long	0.2400     3.5350  # oc   -> o   
+pair_coeff 9 9     lj/class2/coul/long	0.2400     3.5350  # oh   -> o    
+pair_coeff 1 2 lj/cut 0.07000 4.01
+pair_coeff 1 3 lj/cut 0.07000 4.01
+pair_coeff 1 4 lj/cut 0.07000 4.01
+pair_coeff 1 5 lj/cut 0.03000 3.47
+pair_coeff 1 6 lj/cut 0.04000 2.1
+pair_coeff 1 8 lj/cut 0.15000 3.77
+pair_coeff 1 9 lj/cut 0.15000 3.77 
+pair_coeff 2 7 lj/cut 0.01033 3.85
+pair_coeff 3 7 lj/cut 0.01033 3.85
+pair_coeff 4 7 lj/cut 0.01033 3.85
+pair_coeff 6 7 lj/cut 0.00249 2.01
+pair_coeff 7 8 lj/cut 0.04591 3.61
+pair_coeff 7 9 lj/cut 0.04591 3.61
+pair_coeff 5 7 lj/cut 0.00600 3.33
+
+kspace_style    pppm 1e-4
+thermo 10000
+thermo_style custom step temp vol press
+#能量最小化
+thermo 1000
+thermo_style custom step temp pe ke press
+dump 1 all atom 500 h-BN-cnf.lammpstrj
+min_style cg
+minimize 1.0e-15 1.0e-15 10000 10000
+undump 1
+reset_timestep 0 
+
+#温度初始化
+velocity all create 300 98989 dist gaussian
+dump  1 all atom 500 h-BN-cnf.lammpstrj
+fix 1 all npt temp 300 300 10 x 0 0 1000 y 0 0 1000
+run 50000
+unfix  1
+undump  1
+reset_timestep 0
+
+#Green-Kubo公式中需要的数据
+variable A equal lx*ly*1.54
+variable dt equal 0.001
+variable cor equal 10000
+variable sam equal 10
+variable dum equal ${cor}*${sam}
+variable temp_s equal 300
+#单位转换公式
+variable kB equal 8.6173324e-5 # eV/K Boltzmann
+variable ev2J equal 1.60210e-19 # eV to J/mol
+variable A2m equal 1.0e-10 # Angstrom to meter
+variable ps2s equal 1.0e-12 # picoseconds to seconds
+variable convert equal ${ev2J}/(${A2m}*${ps2s})
+#计算热流
+compute myKE all ke/atom
+compute myPE all pe/atom
+compute myStress all stress/atom NULL virial
+compute flux all heat/flux myKE myPE myStress
+#保存三个方向的热流
+variable Jx equal c_flux[1]
+variable Jy equal c_flux[2]
+variable Jz equal c_flux[3]
+fix JJ all ave/correlate ${sam} ${cor} ${dum} c_flux[1] c_flux[2] c_flux[3] type auto file SLG_J.J_t.dat ave running
+
+#计算Green-Kubo公式系数
+variable   scale equal (${dt}*${sam})/(${kB}*${temp_s}^2*$A)
+#计算Green-Kubo公式
+variable k11 equal (trap(f_JJ[3])*${scale})*${convert}
+variable k22 equal (trap(f_JJ[4])*${scale})*${convert}
+variable k33 equal (trap(f_JJ[5])*${scale})*${convert}
+variable k_total equal (v_k11+v_k22+v_k33)/3.0
+#fix Ph all phonon 10 10000 0 GAMMA SLG nasr 100
+
+#启动运算
+thermo 100000
+thermo_style custom step temp press v_k11 v_k22 v_k33 v_k_total
+fix 1 all nve
+run 1000000
+#输出热导率
+print "***************************************************** "
+print " k11 conductivity : ${k11} [W/mK] @ ${temp_s} K"
+print " k22 conductivity : ${k22} [W/mK] @ ${temp_s} K"
+print " k33 conductivity : ${k33} [W/mK] @ ${temp_s} K"
+print " 3D average conductivity: ${k_total} [W/mK] @ ${temp_s} K"
+print "*****************************************************"
